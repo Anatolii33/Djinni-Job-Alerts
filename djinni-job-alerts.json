@@ -1,0 +1,161 @@
+{
+  "name": "Djinni Job Alerts",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 10,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "feedUrl": "https://djinni.co/jobs/rss/"
+      },
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [
+        -464,
+        -224
+      ],
+      "id": "b58a9bee-8d88-432c-a6b5-49386108fcf7",
+      "name": "RSS Feed Trigger"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        688,
+        -224
+      ],
+      "id": "a8b1be69-8513-4f78-861e-34de967226e6",
+      "name": "Send to Telegram"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Format message\" — Mode: Run Once for All Items\nconst esc = s => String(s ?? '')\n  .replace(/&/g, '&amp;')\n  .replace(/</g, '&lt;')\n  .replace(/>/g, '&gt;');\n\nreturn $input.all().map(({ json: j }) => {\n  const snippet = j.text.length > 300 ? j.text.slice(0, 300) + '…' : j.text;\n\n  const message = [\n    `🆕 <b>${esc(j.title)}</b>`,\n    `📂 ${esc(j.category)}`,\n    `🔑 ${esc(j.matched_keywords.join(', '))}`,\n    '',\n    esc(snippet),\n    '',\n    `🔗 <a href=\"${esc(j.link)}\">Відкрити на Djinni</a>`,\n  ].join('\\n');\n\n  return { json: { ...j, message } };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        432,
+        -224
+      ],
+      "id": "1c8c64be-ee89-47b3-b686-a86fb4e4bca4",
+      "name": "Format message"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Keyword filter\" — Mode: Run Once for All Items\n// ===== НАЛАШТУВАННЯ (міняй тут) =====\n\n// true  — пропускає ВСІ вакансії (для тестів)\n// false — робочий режим\nconst TEST_MODE = false;\n\n// Інструменти: шукаємо в назві І в описі\nconst TOOLS = ['n8n', 'make.com', 'zapier', 'integromat', 'pipedream'];\n\n// Слова, які шукаємо ТІЛЬКИ в назві вакансії\nconst TITLE_WORDS = [\n  'automation', 'автоматиз',\n  'ai agent', 'ai-agent', 'ai агент', 'ai-агент',\n  'chatbot', 'чат-бот', 'чатбот',\n];\n\n// Категорії, які відкидаємо завжди\nconst EXCLUDE_CATEGORIES = ['QA', 'QA Automation', 'Quality Assurance', 'QA Hardware / Embedded'];\n\n// Рівні/ролі в назві, які не підходять\nconst EXCLUDE_TITLE = /\\b(senior|sr|lead|head|architect|principal|director|cto|ceo)\\b/i;\nconst EXCLUDE_QA_TITLE = /\\bqa\\b|test automation|automation test|тестувальник/i;\n\n// ===== ЛОГІКА =====\nconst results = [];\n\nfor (const item of $input.all()) {\n  const j = item.json;\n  const title = (j.title || '').toLowerCase();\n  const text = (j.text || '').toLowerCase();\n  const category = j.category || '';\n\n  if (TEST_MODE) {\n    results.push({ json: { ...j, matched_keywords: ['TEST'] } });\n    continue;\n  }\n\n  // 1. Відкидаємо явно непотрібне\n  if (EXCLUDE_CATEGORIES.includes(category)) continue;\n  if (EXCLUDE_TITLE.test(j.title || '') || EXCLUDE_QA_TITLE.test(j.title || '')) continue;\n\n  // 2. Шукаємо збіги\n  const matched = [\n    ...TOOLS.filter(k => title.includes(k) || text.includes(k)),\n    ...TITLE_WORDS.filter(k => title.includes(k)),\n  ];\n\n  if (matched.length === 0) continue;\n\n  results.push({\n    json: { ...j, matched_keywords: matched },\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        -224
+      ],
+      "id": "1b48fa4d-f90a-4a07-b795-77e68f348917",
+      "name": "Keyword filter"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node — Mode: Run Once for All Items\nconst MAX_LEN = 6000; // максимальна довжина опису\n\n// Прибирає HTML-теги і декодує сутності (&nbsp;, &amp; ...)\nfunction htmlToText(html) {\n  return String(html || '')\n    .replace(/<\\s*br\\s*\\/?>/gi, '\\n')                 // <br> → новий рядок\n    .replace(/<\\/(p|li|ul|ol|h[1-6]|div)>/gi, '\\n')   // кінець абзацу/пункту → новий рядок\n    .replace(/<li[^>]*>/gi, '• ')                     // пункти списку → \"• \"\n    .replace(/<[^>]+>/g, '')                          // решта тегів геть\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;|&apos;/g, \"'\")\n    .replace(/&#(\\d+);/g, (_, n) => String.fromCharCode(Number(n)))\n    .replace(/&amp;/g, '&')                           // &amp; останнім, щоб не декодувати двічі\n    .replace(/[ \\t]+/g, ' ')                          // зайві пробіли\n    .replace(/\\n\\s*\\n+/g, '\\n')                       // зайві порожні рядки\n    .trim();\n}\n\nconst results = [];\n\nfor (const item of $input.all()) {\n  const j = item.json;\n\n  // 1. job_id з посилання: /jobs/853038-c-integration-engineer/ → 853038\n  const link = j.link || j.guid || '';\n  const idMatch = link.match(/\\/jobs\\/(\\d+)/);\n  if (!idMatch) continue; // без ID не зможемо відсікати дублі — пропускаємо\n\n  // 2. Текст без HTML: чистимо самі (краще зберігає списки),\n  //    а якщо HTML немає — беремо готовий contentSnippet\n  const html = j.content || j.description || '';\n  let text = html ? htmlToText(html) : String(j.contentSnippet || '').trim();\n\n  // 3. Обрізаємо задовгий опис\n  const truncated = text.length > MAX_LEN;\n  if (truncated) text = text.slice(0, MAX_LEN) + '…';\n\n  // Категорія: у фіді буває пустий <category/>, тому фільтруємо\n  const categories = (Array.isArray(j.categories) ? j.categories : [j.categories])\n    .map(c => (typeof c === 'string' ? c : c?._ ?? '').trim())\n    .filter(Boolean);\n\n  results.push({\n    json: {\n      job_id: Number(idMatch[1]),\n      title: (j.title || '').trim(),\n      link,\n      category: categories[0] || '',\n      published_at: j.isoDate || (j.pubDate ? new Date(j.pubDate).toISOString() : null),\n      text,\n      text_truncated: truncated,\n    },\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        -224
+      ],
+      "id": "d13f045b-227e-4b71-bc50-1e1a6afe892b",
+      "name": "Clean data"
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.job_id }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        192,
+        -224
+      ],
+      "id": "2fb88782-2ab2-4dc5-9578-1fafdd5e8e37",
+      "name": "Remove Duplicates"
+    }
+  ],
+  "connections": {
+    "RSS Feed Trigger": {
+      "main": [
+        [
+          {
+            "node": "Clean data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format message": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keyword filter": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean data": {
+      "main": [
+        [
+          {
+            "node": "Keyword filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Format message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  }
+}
