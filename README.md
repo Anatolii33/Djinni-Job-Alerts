@@ -52,7 +52,7 @@ Why are some words searched only in the title? Words like "automation" or "chatb
 We are looking for a junior engineer to build and support
 business automations in n8n…
 
-🔗 Відкрити на Djinni
+🔗 Open in Djinni
 ```
 
 The alert shows the title, category, matched keywords, the first 300 characters of the description and a link to the job.
